@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>合作夥伴清單｜Jojo Zoo Park</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    .img-fallback { background: repeating-linear-gradient(45deg,#f1f5f9,#f1f5f9 10px,#e2e8f0 10px,#e2e8f0 20px); }
+    .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    details[open] summary svg { transform: rotate(180deg); }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800">
+  <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
+      <div class="shrink-0 w-10 h-10 rounded-2xl bg-emerald-100 grid place-items-center">🦙</div>
+      <div>
+        <h1 class="text-xl font-bold">合作夥伴清單</h1>
+        <p class="text-sm text-slate-500">資料來源：Google Sheets（即時更新）</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    <section class="mb-6 grid gap-3 sm:grid-cols-3">
+      <label class="sm:col-span-2 flex items-center gap-3 bg-white border border-slate-200 rounded-2xl px-4 py-2 shadow-sm">
+        <span>🔎</span>
+        <input id="searchInput" type="search" placeholder="搜尋公司名稱、分類…" class="w-full outline-none text-slate-700 placeholder:text-slate-400">
+      </label>
+      <div class="flex gap-3">
+        <select id="categorySelect" class="w-full bg-white border border-slate-200 rounded-2xl px-3 py-2 shadow-sm">
+          <option value="">全部分類</option>
+        </select>
+        <button id="resetBtn" class="whitespace-nowrap bg-slate-900 text-white rounded-2xl px-4 py-2 shadow-sm">重置</button>
+      </div>
+    </section>
+
+    <section id="cards" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"></section>
+
+    <p id="emptyState" class="hidden text-center text-slate-500 py-10">找不到符合條件的合作夥伴。</p>
+
+    <div id="status" class="mt-8 text-center text-sm text-slate-500"></div>
+  </main>
+
+  <footer class="mt-10 py-10 text-center text-xs text-slate-400">
+    © <span id="year"></span> 九九峰動物樂園 Jojo Zoo Park
+  </footer>
+
+  <script>
+    const DIRECT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT7bVAuM7vw6hTlzvt08fL0svuf9Eh64IWsJ0tJVaLC5odpiSOM9w-A6VpCr0lLv31kYQw86V34RNJt/pub?gid=0&single=true&output=csv";
+
+    function proxify(url){
+      return `https://corsproxy.io/?${encodeURIComponent(url)}`;
+    }
+
+    const cardsEl = document.getElementById('cards');
+    const emptyEl = document.getElementById('emptyState');
+    const statusEl = document.getElementById('status');
+    const categorySelect = document.getElementById('categorySelect');
+    const searchInput = document.getElementById('searchInput');
+    const resetBtn = document.getElementById('resetBtn');
+
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    let rawRows = [];
+    let filtered = [];
+
+    async function loadData(){
+      const url = proxify(DIRECT_CSV_URL);
+      statusEl.textContent = '資料載入中…（經由 CORS 代理）';
+      try {
+        const response = await fetch(url, { cache: 'no-store' });
+        if(!response.ok) throw new Error(`HTTP ${response.status}`);
+        const csvText = await response.text();
+        const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+        rawRows = Array.isArray(parsed.data) ? parsed.data : [];
+        rawRows = rawRows.map(r => ({
+          Name: (r['Name']||'').trim(),
+          Website: (r['Website']||'').trim(),
+          Logo: (r['Logo']||'').trim(),
+          Category: (r['Category']||'').trim(),
+          Description: (r['Description']||'').trim()
+        })).filter(r => r.Name);
+
+        const cats = Array.from(new Set(rawRows.map(r => r.Category).filter(Boolean))).sort();
+        categorySelect.innerHTML = '<option value="">全部分類</option>' + cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+        applyFilters();
+        statusEl.textContent = '';
+      } catch (err){
+        console.error(err);
+        statusEl.innerHTML = `⚠️ 無法讀取資料表。<br><span class="text-xs">${escapeHtml(String(err))}</span>`;
+      }
+    }
+
+    function applyFilters(){
+      const q = searchInput.value.trim().toLowerCase();
+      const cat = categorySelect.value;
+      filtered = rawRows.filter(r => {
+        const hay = `${r.Name}\n${r.Description}\n${r.Category}`.toLowerCase();
+        const hitQ = q ? hay.includes(q) : true;
+        const hitC = cat ? r.Category === cat : true;
+        return hitQ && hitC;
+      });
+      renderCards(filtered);
+    }
+
+    function renderCards(rows){
+      if(!rows.length){
+        cardsEl.innerHTML = '';
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+      emptyEl.classList.add('hidden');
+      cardsEl.innerHTML = rows.map(r => cardTpl(r)).join('');
+      cardsEl.querySelectorAll('img[data-fallback]')?.forEach(img => {
+        img.onerror = () => {
+          const wrap = document.createElement('div');
+          wrap.className = 'img-fallback w-14 h-14 rounded-xl';
+          img.replaceWith(wrap);
+        };
+      });
+    }
+
+    function cardTpl(r){
+      const safeName = escapeHtml(r.Name || '未命名夥伴');
+      const safeCat = escapeHtml(r.Category || '');
+      const safeDesc = escapeHtml(r.Description || '');
+      const website = (r.Website || '').startsWith('http') ? r.Website : (r.Website ? `https://${r.Website}` : '');
+      const logo = r.Logo || '';
+      return `
+        <article class="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex gap-4 hover:shadow transition-shadow">
+          <div class="shrink-0">
+            ${logo ? `<img data-fallback src="${logo}" alt="${safeName} logo" class="w-14 h-14 rounded-xl object-cover">` : `<div class="img-fallback w-14 h-14 rounded-xl"></div>`}
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-start gap-2">
+              <h3 class="font-semibold text-slate-900 truncate">${website ? `<a class="hover:underline" href="${website}" target="_blank" rel="noopener">${safeName}</a>` : safeName}</h3>
+              ${safeCat ? `<span class="ml-auto text-xs bg-emerald-50 text-emerald-700 rounded-full px-2 py-1">${safeCat}</span>` : ''}
+            </div>
+            <p class="mt-1 text-sm text-slate-600 line-clamp-3">${safeDesc}</p>
+            ${website ? `<a class="mt-2 inline-block text-sm text-emerald-700 hover:underline" href="${website}" target="_blank" rel="noopener">造訪官網 →</a>` : ''}
+          </div>
+        </article>
+      `;
+    }
+
+    function escapeHtml(str){
+      return String(str).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+    }
+
+    function debounce(fn, delay = 200){
+      let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+    }
+
+    searchInput.addEventListener('input', debounce(applyFilters, 200));
+    categorySelect.addEventListener('change', applyFilters);
+    resetBtn.addEventListener('click', () => { searchInput.value = ''; categorySelect.value = ''; applyFilters(); });
+
+    loadData();
+  </script>
+</body>
+</html>
